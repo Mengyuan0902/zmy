@@ -4,7 +4,10 @@
 //   NUTSTORE_PASS = 坚果云「应用密码」（设置→安全→第三方应用管理里生成）
 //   SYNC_KEY      = 自定义共享密钥，用于校验调用方
 const DAV_BASE = 'https://dav.jianguoyun.com/dav/';
+const DIR = 'pwb_sync';
 const FILE = 'pwb_data.json';
+const DIR_URL = DAV_BASE + DIR + '/';
+const FILE_URL = DAV_BASE + DIR + '/' + FILE;
 
 const cors = {
   'Access-Control-Allow-Origin': '*',
@@ -16,6 +19,13 @@ function authHeader() {
   const u = process.env.NUTSTORE_USER || '';
   const p = process.env.NUTSTORE_PASS || '';
   return 'Basic ' + Buffer.from(u + ':' + p).toString('base64');
+}
+
+// 坚果云根目录常为 WebDAV 只读，子目录可写。先 MKCOL 创建子目录（已存在会返回 405/409，忽略即可）。
+async function ensureDir(headers) {
+  try {
+    await fetch(DIR_URL, { method: 'MKCOL', headers });
+  } catch (e) {}
 }
 
 exports.handler = async (event) => {
@@ -33,12 +43,11 @@ exports.handler = async (event) => {
     return { statusCode: 401, headers: { ...cors, 'Content-Type': 'application/json' }, body: JSON.stringify({ error: 'unauthorized' }) };
   }
 
-  const url = DAV_BASE + FILE;
   const headers = { Authorization: authHeader(), 'Content-Type': 'application/json' };
 
   try {
     if (event.httpMethod === 'GET') {
-      const r = await fetch(url, { headers });
+      const r = await fetch(FILE_URL, { headers });
       if (r.status === 404) {
         return { statusCode: 200, headers: { ...cors, 'Content-Type': 'application/json' }, body: JSON.stringify({ data: {} }) };
       }
@@ -56,7 +65,8 @@ exports.handler = async (event) => {
       try { JSON.parse(body); } catch (e) {
         return { statusCode: 400, headers: { ...cors, 'Content-Type': 'application/json' }, body: JSON.stringify({ error: 'bad_json' }) };
       }
-      const r = await fetch(url, { method: 'PUT', headers, body });
+      await ensureDir(headers);
+      const r = await fetch(FILE_URL, { method: 'PUT', headers, body });
       if (r.status !== 200 && r.status !== 201 && r.status !== 204 && r.status !== 207) {
         return { statusCode: 502, headers: { ...cors, 'Content-Type': 'application/json' }, body: JSON.stringify({ error: 'nutstore_' + r.status }) };
       }
