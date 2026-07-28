@@ -1,0 +1,14 @@
+{
+  "name":"个人工作台",
+  "short_name":"工作台",
+  "description":"生活日常、健康记录、每周每月复盘与抖音创作辅助",
+  "start_url":".",
+  "scope":".",
+  "display":"standalone",
+  "orientation":"portrait",
+  "background_color":"#f2f8f3",
+  "theme_color":"#3f9e75",
+  "icons":[
+    {"src":"icon.svg","sizes":"any","type":"image/svg+xml","purpose":"any maskable"}
+  ]
+}
