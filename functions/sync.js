@@ -1,80 +1,131 @@
-// Netlify Function: 中转代理，浏览器同源调用，由本函数用服务器身份读写坚果云 WebDAV
-// 环境变量（在 Netlify 后台设置，绝不出现在浏览器）：
-//   NUTSTORE_USER = 坚果云邮箱
-//   NUTSTORE_PASS = 坚果云「应用密码」（设置→安全→第三方应用管理里生成）
-//   SYNC_KEY      = 自定义共享密钥，用于校验调用方
-const DAV_BASE = 'https://dav.jianguoyun.com/dav/';
-const DIR = 'pwb_sync';
-const FILE = 'pwb_data.json';
-const DIR_URL = DAV_BASE + DIR + '/';
-const FILE_URL = DAV_BASE + DIR + '/' + FILE;
+// Netlify 云函数：用 GitHub Contents API 当云端存储
+// 不再依赖坚果云 WebDAV（163 邮箱 WebDAV 写权限被锁）
+//
+// 所需环境变量（在 Netlify → Project configuration → Environment variables 设置）：
+//   GH_TOKEN   GitHub Personal Access Token (Fine-grained, contents:write 权限)
+//   GH_REPO    仓库，如 "Mengyuan0902/zmy"  (可选，默认 Mengyuan0902/zmy)
+//   GH_BRANCH  分支名                       (可选，默认 main)
+//   GH_PATH    同步文件路径                   (可选，默认 pwb_data.json)
+//   SYNC_KEY   你自己定的同步密钥             (App 内要填一样的)
 
 const cors = {
   'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'content-type,x-sync-key',
-  'Access-Control-Allow-Methods': 'GET,PUT,POST,OPTIONS',
+  'Access-Control-Allow-Methods': 'GET, POST, PUT, OPTIONS',
+  'Access-Control-Allow-Headers': 'Content-Type, X-Sync-Key',
+  'Access-Control-Max-Age': '86400',
 };
 
-function authHeader() {
-  const u = process.env.NUTSTORE_USER || '';
-  const p = process.env.NUTSTORE_PASS || '';
-  return 'Basic ' + Buffer.from(u + ':' + p).toString('base64');
-}
+const GH_API = 'https://api.github.com';
+const DEFAULT_REPO = 'Mengyuan0902/zmy';
+const DEFAULT_BRANCH = 'main';
+const DEFAULT_PATH = 'pwb_data.json';
 
-// 坚果云根目录常为 WebDAV 只读，子目录可写。先 MKCOL 创建子目录（已存在会返回 405/409，忽略即可）。
-async function ensureDir(headers) {
-  try {
-    await fetch(DIR_URL, { method: 'MKCOL', headers });
-  } catch (e) {}
+function b64encodeUtf8(str) {
+  return Buffer.from(str, 'utf8').toString('base64');
+}
+function b64decodeUtf8(b64) {
+  return Buffer.from(b64, 'base64').toString('utf8');
 }
 
 exports.handler = async (event) => {
   if (event.httpMethod === 'OPTIONS') {
     return { statusCode: 204, headers: cors, body: '' };
   }
-  const user = process.env.NUTSTORE_USER;
-  const pass = process.env.NUTSTORE_PASS;
+
+  const token = process.env.GH_TOKEN;
   const key = process.env.SYNC_KEY;
-  if (!user || !pass || !key) {
-    return { statusCode: 500, headers: { ...cors, 'Content-Type': 'application/json' }, body: JSON.stringify({ error: 'server_not_configured' }) };
+  const repo = process.env.GH_REPO || DEFAULT_REPO;
+  const branch = process.env.GH_BRANCH || DEFAULT_BRANCH;
+  const path = process.env.GH_PATH || DEFAULT_PATH;
+
+  if (!token) {
+    return { statusCode: 500, headers: { ...cors, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ error: 'server_not_configured', detail: 'missing GH_TOKEN' }) };
   }
-  const provided = event.headers['x-sync-key'] || (event.queryStringParameters && event.queryStringParameters.key);
-  if (provided !== key) {
-    return { statusCode: 401, headers: { ...cors, 'Content-Type': 'application/json' }, body: JSON.stringify({ error: 'unauthorized' }) };
+  if (!key) {
+    return { statusCode: 500, headers: { ...cors, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ error: 'server_not_configured', detail: 'missing SYNC_KEY' }) };
   }
 
-  const headers = { Authorization: authHeader(), 'Content-Type': 'application/json' };
+  const provided = (event.headers['x-sync-key'] || (event.queryStringParameters && event.queryStringParameters.key) || '').trim();
+  if (provided !== key) {
+    return { statusCode: 401, headers: { ...cors, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ error: 'unauthorized' }) };
+  }
+
+  const ghHeaders = {
+    'Authorization': 'Bearer ' + token,
+    'Accept': 'application/vnd.github+json',
+    'X-GitHub-Api-Version': '2022-11-28',
+    'User-Agent': 'pwb-sync/1.0',
+  };
+
+  const apiContentsUrl = `${GH_API}/repos/${repo}/contents/${encodeURIComponent(path)}`;
 
   try {
     if (event.httpMethod === 'GET') {
-      const r = await fetch(FILE_URL, { headers });
+      const r = await fetch(`${apiContentsUrl}?ref=${encodeURIComponent(branch)}`, { headers: ghHeaders });
       if (r.status === 404) {
-        return { statusCode: 200, headers: { ...cors, 'Content-Type': 'application/json' }, body: JSON.stringify({ data: {} }) };
+        return { statusCode: 200, headers: { ...cors, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ data: {} }) };
       }
       if (!r.ok) {
-        return { statusCode: 502, headers: { ...cors, 'Content-Type': 'application/json' }, body: JSON.stringify({ error: 'nutstore_' + r.status }) };
+        const t = await r.text();
+        return { statusCode: 502, headers: { ...cors, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ error: 'github_get_' + r.status, detail: t.slice(0, 200) }) };
       }
-      const text = await r.text();
+      const meta = await r.json();
       let data = {};
-      try { data = JSON.parse(text); } catch (e) { data = {}; }
-      return { statusCode: 200, headers: { ...cors, 'Content-Type': 'application/json' }, body: JSON.stringify({ data }) };
+      try { data = JSON.parse(b64decodeUtf8(meta.content || '')); } catch (e) { data = {}; }
+      return { statusCode: 200, headers: { ...cors, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ data, sha: meta.sha, size: meta.size, path: meta.path, repo, branch }) };
     }
 
     if (event.httpMethod === 'PUT' || event.httpMethod === 'POST') {
-      let body = event.body || '{}';
+      const body = event.body || '{}';
       try { JSON.parse(body); } catch (e) {
-        return { statusCode: 400, headers: { ...cors, 'Content-Type': 'application/json' }, body: JSON.stringify({ error: 'bad_json' }) };
+        return { statusCode: 400, headers: { ...cors, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ error: 'bad_json' }) };
       }
-      await ensureDir(headers);
-      const r = await fetch(FILE_URL, { method: 'PUT', headers, body });
-      if (r.status !== 200 && r.status !== 201 && r.status !== 204 && r.status !== 207) {
-        return { statusCode: 502, headers: { ...cors, 'Content-Type': 'application/json' }, body: JSON.stringify({ error: 'nutstore_' + r.status }) };
+
+      // 更新已有文件需要 sha；新建则不传
+      let sha = undefined;
+      const getR = await fetch(`${apiContentsUrl}?ref=${encodeURIComponent(branch)}`, { headers: ghHeaders });
+      if (getR.status === 200) {
+        const meta = await getR.json();
+        sha = meta.sha;
+      } else if (getR.status !== 404) {
+        const t = await getR.text();
+        return { statusCode: 502, headers: { ...cors, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ error: 'github_lookup_' + getR.status, detail: t.slice(0, 200) }) };
       }
-      return { statusCode: 200, headers: { ...cors, 'Content-Type': 'application/json' }, body: JSON.stringify({ ok: true }) };
+
+      const putPayload = {
+        message: `chore(pwb-sync): update ${path} at ${new Date().toISOString()}`,
+        content: b64encodeUtf8(body),
+        branch: branch,
+      };
+      if (sha) putPayload.sha = sha;
+
+      const putR = await fetch(apiContentsUrl, {
+        method: 'PUT',
+        headers: { ...ghHeaders, 'Content-Type': 'application/json' },
+        body: JSON.stringify(putPayload),
+      });
+      if (!putR.ok) {
+        const t = await putR.text();
+        return { statusCode: 502, headers: { ...cors, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ error: 'github_put_' + putR.status, detail: t.slice(0, 200) }) };
+      }
+      const resp = await putR.json();
+      return { statusCode: 200, headers: { ...cors, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ok: true, sha: resp.content && resp.content.sha, ts: Date.now() }) };
     }
 
-    return { statusCode: 405, headers: { ...cors, 'Content-Type': 'application/json' }, body: JSON.stringify({ error: 'method_not_allowed' }) };
+    return { statusCode: 405, headers: { ...cors, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ error: 'method_not_allowed' }) };
   } catch (e) {
-    return { statusCode: 500, headers: { ...cors, 'Content-Type': 'application/json' }, body: JSON.stringify({ error: String(e && e.message || e) }) };
+    return { statusCode: 500, headers: { ...cors, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ error: 'server_error', detail: String(e && e.message || e) }) };
   }
 };
