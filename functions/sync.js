@@ -1,4 +1,4 @@
-// Netlify 云函数：用 GitHub Contents API 当云端存储
+/ Netlify 云函数：用 GitHub Contents API 当云端存储
 // 不再依赖坚果云 WebDAV（163 邮箱 WebDAV 写权限被锁）
 //
 // 所需环境变量（在 Netlify → Project configuration → Environment variables 设置）：
