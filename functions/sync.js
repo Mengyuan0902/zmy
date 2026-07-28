@@ -1,12 +1,12 @@
-/ Netlify 云函数：用 GitHub Contents API 当云端存储
-// 不再依赖坚果云 WebDAV（163 邮箱 WebDAV 写权限被锁）
+// Netlify cloud function: use GitHub Contents API as cloud storage.
+// No longer depends on Nutstore WebDAV (163 mail WebDAV writes are locked).
 //
-// 所需环境变量（在 Netlify → Project configuration → Environment variables 设置）：
-//   GH_TOKEN   GitHub Personal Access Token (Fine-grained, contents:write 权限)
-//   GH_REPO    仓库，如 "Mengyuan0902/zmy"  (可选，默认 Mengyuan0902/zmy)
-//   GH_BRANCH  分支名                       (可选，默认 main)
-//   GH_PATH    同步文件路径                   (可选，默认 pwb_data.json)
-//   SYNC_KEY   你自己定的同步密钥             (App 内要填一样的)
+// Required env vars (set in Netlify -> Project configuration -> Environment variables):
+//   GH_TOKEN   GitHub Personal Access Token (Fine-grained, contents:write scope)
+//   GH_REPO    Repository, e.g. "Mengyuan0902/zmy"  (optional, default Mengyuan0902/zmy)
+//   GH_BRANCH  Branch name                          (optional, default main)
+//   GH_PATH    Sync file path                       (optional, default pwb_data.json)
+//   SYNC_KEY   Your own sync key                   (must match the one typed in the App)
 
 const cors = {
   'Access-Control-Allow-Origin': '*',
@@ -88,7 +88,7 @@ exports.handler = async (event) => {
           body: JSON.stringify({ error: 'bad_json' }) };
       }
 
-      // 更新已有文件需要 sha；新建则不传
+      // Updating an existing file requires sha; new file omits sha.
       let sha = undefined;
       const getR = await fetch(`${apiContentsUrl}?ref=${encodeURIComponent(branch)}`, { headers: ghHeaders });
       if (getR.status === 200) {
