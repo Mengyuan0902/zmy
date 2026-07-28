@@ -213,7 +213,7 @@ canvas{max-width:100%}
     <button onclick="exportData()">⬇️ 导出备份 (JSON)</button>
     <button onclick="document.getElementById('importFile').click()">⬆️ 导入备份</button>
     <button onclick="showMobileGuide()">📱 手机使用指南</button>
-    <button onclick="showSyncModal()">☁️ 坚果云同步</button>
+    <button onclick="showSyncModal()">☁️ 云同步</button>
     <input type="file" id="importFile" accept=".json" style="display:none" onchange="importData(this)">
   </div>
 </aside>
@@ -1563,7 +1563,7 @@ function renderHome(){
     <div class="stat"><div class="l">本月写日记</div><div class="v">${diaryMonth} <span style="font-size:13px">天</span></div></div>`;
 }
 
-/* ==================== 坚果云同步（Netlify 云函数中转） ==================== */
+/* ==================== 云同步（Netlify 云函数 → GitHub Contents API） ==================== */
 function syncMerge(remote){
   remote=remote||{};
   const out=JSON.parse(JSON.stringify(defaultData));
@@ -1609,18 +1609,20 @@ function setSyncStatus(t){const el=document.getElementById('syncStatus');if(el)e
 function showSyncModal(){
   const key=localStorage.getItem('pwb_sync_key')||'';
   const auto=localStorage.getItem('pwb_autosync')==='1';
-  openModal(`<h3>☁️ 坚果云同步</h3>
-  <div class="muted" style="line-height:1.65;font-size:13px;margin-bottom:12px">
-    让手机 / 电脑数据互通。需两步：<br>
-    ① 在 <b>Netlify 后台 → Site settings → Environment variables</b> 添加：<br>
-    &nbsp;&nbsp;• <code>NUTSTORE_USER</code> = 你的坚果云邮箱<br>
-    &nbsp;&nbsp;• <code>NUTSTORE_PASS</code> = 坚果云<b>应用密码</b>（设置→安全→第三方应用管理里生成，不是登录密码）<br>
-    &nbsp;&nbsp;• <code>SYNC_KEY</code> = 你自己设的一串密钥（下面要填一样的）<br>
-    ② 把下面的「同步密钥」填上即可。坚果云密码<b>不会出现在浏览器里</b>。
+  openModal(`<h3>☁️ 云同步</h3>
+  <div class="muted" style="line-height:1.7;font-size:13px;margin-bottom:12px">
+    让手机 / 电脑数据互通（通过 GitHub 当云端存储，坚果云 WebDAV 不可写，已切到此方案）：<br>
+    ① 在 <b>GitHub</b> 创建一个 <b>Fine-grained Personal Access Token</b>（仅勾选 <code>Contents: Read and write</code>，范围限定到 <code>Mengyuan0902/zmy</code> 仓库），复制 token 字符串。<br>
+    ② 在 <b>Netlify</b> → 该站点 → <b>Project configuration</b> → <b>Environment variables</b> 添加：<br>
+    &nbsp;&nbsp;• <code>GH_TOKEN</code> = 刚才的 PAT<br>
+    &nbsp;&nbsp;• <code>SYNC_KEY</code> = 你自己定的一串密钥（下面要填一样的）<br>
+    &nbsp;&nbsp;• <code>GH_REPO</code> / <code>GH_BRANCH</code> / <code>GH_PATH</code> 可省略，默认 <code>Mengyuan0902/zmy</code> / <code>main</code> / <code>pwb_data.json</code><br>
+    ③ 把下面的「同步密钥」填上（与 Netlify 的 <code>SYNC_KEY</code> 一致），保存即可。GitHub Token <b>不会出现在浏览器里</b>。<br>
+    <span class="muted">同步数据会提交到 <code>pwb_data.json</code>（在你的仓库根目录，可在 GitHub 上直接看到）。</span>
   </div>
   <label class="muted">同步密钥（SYNC_KEY）</label>
   <input type="text" id="syncKey" value="${esc(key)}" placeholder="与 Netlify 后台 SYNC_KEY 一致" style="width:100%;margin:6px 0 12px">
-  <label class="flex" style="gap:8px;margin-bottom:14px;cursor:pointer;align-items:center"><input type="checkbox" id="syncAuto" ${auto?'checked':''}> 开启自动同步（每次改动后自动上传到坚果云）</label>
+  <label class="flex" style="gap:8px;margin-bottom:14px;cursor:pointer;align-items:center"><input type="checkbox" id="syncAuto" ${auto?'checked':''}> 开启自动同步（每次改动后自动上传）</label>
   <div id="syncStatus" class="muted" style="margin-bottom:10px;min-height:18px"></div>
   <div class="flex">
     <button class="btn ghost" onclick="closeModal()">关闭</button>
@@ -1640,7 +1642,7 @@ function doSyncFull(){
   if(!key){toast('请先填同步密钥');return;}
   setSyncStatus('同步中…');
   syncPush().then(()=>{
-    toast('已同步到坚果云 ☁️');
+    toast('已同步到云端 ☁️');
     setSyncStatus('最近同步：'+new Date().toLocaleString());
     if(document.querySelector('.nav-item.active'))onEnterPage(document.querySelector('.nav-item.active').dataset.page);
   }).catch(e=>{toast('同步失败：'+(e&&e.message||e));setSyncStatus('失败：'+(e&&e.message||e));});
